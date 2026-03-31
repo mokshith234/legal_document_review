@@ -1,0 +1,169 @@
+name: legal-document-review
+version: "1.0.0"
+description: >
+  A real-world environment where AI agents review legal contracts.
+  Agents classify clauses, identify risks, and redline documents —
+  tasks that cost law firms thousands of hours annually.
+author: legal-env-team
+license: MIT
+tags:
+  - openenv
+  - legal
+  - nlp
+  - document-review
+  - real-world
+  - benchmark
+
+specification:
+  version: "1.0.0"
+  api: standard
+
+observation_space:
+  type: object
+  description: Current document context visible to the agent
+  fields:
+    task_id:
+      type: string
+      enum: [clause_classifier, risk_spotter, contract_redliner]
+      description: The current task ID
+    document_text:
+      type: string
+      description: Full contract or clause text for the agent to analyze
+    instructions:
+      type: string
+      description: Clear task description and expectations
+    context:
+      type: object
+      description: Metadata about the document (title, length, policy brief for redline)
+      properties:
+        document_title: string
+        document_length: integer
+        policy_brief: string
+    step_count:
+      type: integer
+      description: Current step number (1 to max_steps)
+    max_steps:
+      type: integer
+      description: Maximum steps allowed per episode (typically 5)
+
+action_space:
+  type: object
+  description: What the agent submits as its response
+  required: [action_type, content]
+  properties:
+    action_type:
+      type: string
+      enum: [classify, flag_risks, redline, skip]
+      description: Type of action being submitted
+    content:
+      type: string
+      description: The agent's actual response text
+    metadata:
+      type: object
+      description: Optional structured data (e.g. list of flagged clauses, edits)
+
+reward:
+  min: 0.0
+  max: 1.0
+  shaped: true
+  description: >
+    Rewards are shaped — partial progress yields partial score.
+    Penalties applied for skipping (-0.1), hallucinating, or invalid actions.
+
+episode_length:
+  min: 1
+  max: 5
+  mean: 2.3
+  description: Typical episode lasts 1-5 steps (agents can solve in one step)
+
+state_representation:
+  stateful: true
+  full_history: true
+  reset_clears: history
+  description: >
+    Environment maintains full action history per episode.
+    reset() provides clean slate, no carryover from previous episodes.
+
+tasks:
+  - id: clause_classifier
+    name: Clause Classifier
+    difficulty: easy
+    description: >
+      Given a contract clause, identify its type from a fixed 8-label taxonomy.
+      Correct classification = 1.0, wrong = 0.0, partial credit for near-misses.
+    expected_score_range:
+      min: 0.0
+      max: 1.0
+      baseline_mean: 1.0
+    scoring_rubric: >
+      Exact match: 1.0
+      Near-miss (commonly confused labels): 0.5
+      Wrong label: 0.0
+      Skip penalty: -0.1
+
+  - id: risk_spotter
+    name: Risk Spotter
+    difficulty: medium
+    description: >
+      Given a contract section, identify all high-risk clauses.
+      Scored by precision and recall of identified risks vs. ground truth.
+    expected_score_range:
+      min: 0.0
+      max: 1.0
+      baseline_mean: 0.8389
+    scoring_rubric: >
+      Combines precision (true positives / (true + false positives)) and
+      recall (true positives / (true positives + false negatives)) into F1.
+      Hallucinations mildly penalized but not zeroed.
+
+  - id: contract_redliner
+    name: Contract Redliner
+    difficulty: hard
+    description: >
+      Given a contract and policy brief, propose specific edits to bring
+      the contract into compliance with the policy. Scored on coverage,
+      accuracy, and absence of hallucinated changes.
+    expected_score_range:
+      min: 0.0
+      max: 1.0
+      baseline_mean: 0.7680
+    scoring_rubric: >
+      Edit matching quality (0-1.0 per edit), coverage bonus for all edits,
+      hallucination penalty. Final score = average quality + coverage.
+
+endpoints:
+  reset:
+    method: POST
+    path: /reset
+    description: Start new episode
+    response:
+      observation: Observation
+      session_id: string
+      done: boolean
+
+  step:
+    method: POST
+    path: /step
+    description: Submit action, get reward
+    response:
+      observation: Observation
+      reward: Reward
+      done: boolean
+      info: object
+
+  state:
+    method: GET
+    path: /state
+    description: Get current environment state
+    response:
+      EnvironmentState
+
+  tasks:
+    method: GET
+    path: /tasks
+    description: List all available tasks and schemas
+
+  health:
+    method: GET
+    path: /health
+    description: Health check endpoint (Docker)
