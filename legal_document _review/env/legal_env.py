@@ -1,12 +1,7 @@
 """
 env/legal_env.py
 ----------------
-Phase 4 — Core Environment Engine
-
-Implements the classic RL interface:
-  reset() → Observation
-  step(action) → StepResponse (also unpacks as tuple for test compatibility)
-  state() → EnvironmentState
+Core Environment Engine — reset / step / state
 """
 
 from __future__ import annotations
@@ -37,61 +32,33 @@ TASK_DESCRIPTORS = [
         id="clause_classifier",
         name="Clause Classifier",
         difficulty="easy",
-        description=(
-            "Given a contract clause, identify its type from the 8-label taxonomy. "
-            "Submit action_type='classify' with content=<label>."
-        ),
-        action_schema={
-            "action_type": "classify",
-            "content": f"One of: {', '.join(CLAUSE_TAXONOMY)}",
-            "metadata": "optional",
-        },
+        description="Given a contract clause, identify its type from the 8-label taxonomy.",
+        action_schema={"action_type": "classify", "content": f"One of: {', '.join(CLAUSE_TAXONOMY)}", "metadata": "optional"},
         expected_score_range={"min": 0.0, "max": 1.0},
     ),
     TaskDescriptor(
         id="risk_spotter",
         name="Risk Spotter",
         difficulty="medium",
-        description=(
-            "Given a contract section, identify all high-risk clauses. "
-            "Submit action_type='flag_risks' with content=<risk descriptions> "
-            "or metadata={'risks': [...]}."
-        ),
-        action_schema={
-            "action_type": "flag_risks",
-            "content": "Free-text list of identified risks",
-            "metadata": "optional: {'risks': ['risk 1', 'risk 2', ...]}",
-        },
+        description="Given a contract section, identify all high-risk clauses.",
+        action_schema={"action_type": "flag_risks", "content": "Free-text list of identified risks",
+                       "metadata": "optional: {'risks': ['risk 1', 'risk 2', ...]}"},
         expected_score_range={"min": 0.0, "max": 1.0},
     ),
     TaskDescriptor(
         id="contract_redliner",
         name="Contract Redliner",
         difficulty="hard",
-        description=(
-            "Given a contract and policy brief, propose specific edits. "
-            "Submit action_type='redline' with content=<edits> "
-            "or metadata={'edits': [{'section':..,'issue':..,'redline':..}]}."
-        ),
-        action_schema={
-            "action_type": "redline",
-            "content": "Free-text proposed edits",
-            "metadata": "optional: {'edits': [{'section': ..., 'issue': ..., 'original': ..., 'redline': ...}]}",
-        },
+        description="Given a contract and policy brief, propose specific edits.",
+        action_schema={"action_type": "redline", "content": "Free-text proposed edits",
+                       "metadata": "optional: {'edits': [{'section': ..., 'issue': ..., 'original': ..., 'redline': ...}]}"},
         expected_score_range={"min": 0.0, "max": 1.0},
     ),
 ]
 
 
 class _TupleStepResponse(StepResponse):
-    """
-    StepResponse subclass that also supports 4-tuple unpacking:
-        obs, reward, done, info = env.step(action)
-
-    This satisfies both:
-      - server.py  which accesses .observation, .reward, .done, .info
-      - test_openenv.py which unpacks as (obs, reward, done, info)
-    """
+    """StepResponse that also unpacks as (obs, reward, done, info) tuple."""
     def __iter__(self):
         yield self.observation
         yield self.reward
@@ -101,14 +68,11 @@ class _TupleStepResponse(StepResponse):
 
 class LegalEnv:
     """
-    The OpenEnv-compatible legal document review environment.
+    OpenEnv-compatible legal document review environment.
 
-    Usage
-    -----
     env = LegalEnv()
     obs = env.reset()
     obs, reward, done, info = env.step(Action(action_type="classify", content="indemnification"))
-    state = env.state()
     """
 
     def __init__(self) -> None:
@@ -122,14 +86,8 @@ class LegalEnv:
         self._history: List[Dict[str, Any]] = []
         self._task_rotation_idx: int = 0
 
-    # -----------------------------------------------------------------------
-    # PUBLIC API
-    # -----------------------------------------------------------------------
-
     def reset(self, task_id: Optional[str] = None, doc_id: Optional[str] = None) -> Observation:
-        """
-        Start a new episode. Returns the first Observation.
-        """
+        """Start a new episode with a built-in document."""
         if task_id:
             if task_id not in TASK_IDS:
                 raise ValueError(f"Unknown task_id '{task_id}'. Must be one of {TASK_IDS}")
@@ -138,39 +96,43 @@ class LegalEnv:
             self._task_id = TASK_IDS[self._task_rotation_idx % len(TASK_IDS)]
             self._task_rotation_idx += 1
 
-        self._current_sample = self._pick_sample(self._task_id, doc_id)
-        self._current_doc_id = self._current_sample.get("id", "unknown")
-
-        # Reset episode state — step_count starts at 1 after reset (first step shown)
-        self._step_count     = 1
-        self._episode_done   = False
+        self._current_sample   = self._pick_sample(self._task_id, doc_id)
+        self._current_doc_id   = self._current_sample.get("id", "unknown")
+        self._step_count       = 1
+        self._episode_done     = False
         self._cumulative_score = 0.0
-        self._history        = []
+        self._history          = []
+
+        return self._build_observation()
+
+    def reset_with_custom_doc(self, task_id: str, sample: dict) -> Observation:
+        """Start a new episode using a custom uploaded document from POST /upload."""
+        if task_id not in TASK_IDS:
+            raise ValueError(f"Unknown task_id '{task_id}'. Must be one of {TASK_IDS}")
+
+        self._task_id          = task_id
+        self._current_sample   = sample
+        self._current_doc_id   = sample.get("id", "custom")
+        self._step_count       = 1
+        self._episode_done     = False
+        self._cumulative_score = 0.0
+        self._history          = []
 
         return self._build_observation()
 
     def step(self, action: Action) -> _TupleStepResponse:
-        """
-        Submit an action and receive (observation, reward, done, info).
-        Also accessible as a StepResponse object via field names.
-        """
+        """Submit an action. Returns (observation, reward, done, info)."""
         if self._episode_done:
-            raise RuntimeError(
-                "Episode is done. Call reset() to start a new episode."
-            )
+            raise RuntimeError("Episode is done. Call reset() to start a new episode.")
 
-        # --- grade ----------------------------------------------------------
         reward = self._grade(action)
 
-        # --- episode termination -------------------------------------------
         done = reward.done or self._step_count >= MAX_STEPS
         if done:
             reward.done = True
             self._episode_done = True
 
         self._cumulative_score += reward.score
-
-        # --- log history ---------------------------------------------------
         self._history.append({
             "step": self._step_count,
             "action_type": action.action_type,
@@ -181,20 +143,17 @@ class LegalEnv:
         })
 
         self._step_count += 1
-
         next_obs = self._build_observation()
-
-        info = {
-            "session_id": self._session_id,
-            "cumulative_score": round(self._cumulative_score, 4),
-            "steps_remaining": MAX_STEPS - self._step_count,
-        }
 
         return _TupleStepResponse(
             observation=next_obs,
             reward=reward,
             done=done,
-            info=info,
+            info={
+                "session_id": self._session_id,
+                "cumulative_score": round(self._cumulative_score, 4),
+                "steps_remaining": MAX_STEPS - self._step_count,
+            },
         )
 
     def state(self) -> EnvironmentState:
@@ -212,55 +171,41 @@ class LegalEnv:
 
     @staticmethod
     def tasks() -> List[TaskDescriptor]:
-        """Return all available task descriptors."""
         return TASK_DESCRIPTORS
 
-    # -----------------------------------------------------------------------
-    # PRIVATE HELPERS
-    # -----------------------------------------------------------------------
-
     def _grade(self, action: Action) -> Reward:
-        """Dispatch to the correct grader based on current task."""
         if self._task_id == "clause_classifier":
-            label = self._current_sample["label"]
-            return classifier_grader.grade(action, label)
+            return classifier_grader.grade(action, self._current_sample["label"])
         elif self._task_id == "risk_spotter":
-            risks = self._current_sample["ground_truth_risks"]
-            return risk_grader.grade(action, risks)
+            return risk_grader.grade(action, self._current_sample["ground_truth_risks"])
         elif self._task_id == "contract_redliner":
-            redlines = self._current_sample["ground_truth_redlines"]
-            return redline_grader.grade(action, redlines)
+            return redline_grader.grade(action, self._current_sample["ground_truth_redlines"])
         else:
             raise ValueError(f"No grader for task '{self._task_id}'")
 
     def _pick_sample(self, task_id: str, doc_id: Optional[str]) -> Dict[str, Any]:
-        """Pick a document sample for the given task."""
-        if task_id == "clause_classifier":
-            pool = CLASSIFICATION_SAMPLES
-        elif task_id == "risk_spotter":
-            pool = RISK_SAMPLES
-        elif task_id == "contract_redliner":
-            pool = REDLINE_SAMPLES
-        else:
+        pool = {
+            "clause_classifier": CLASSIFICATION_SAMPLES,
+            "risk_spotter": RISK_SAMPLES,
+            "contract_redliner": REDLINE_SAMPLES,
+        }.get(task_id)
+        if pool is None:
             raise ValueError(f"Unknown task: {task_id}")
-
         if doc_id:
             for s in pool:
                 if s["id"] == doc_id:
                     return s
             raise ValueError(f"Document '{doc_id}' not found in task '{task_id}'")
-
         return random.choice(pool)
 
     def _build_observation(self) -> Observation:
-        """Construct the Observation from current state."""
         task_id = self._task_id
         sample  = self._current_sample
 
         if task_id == "clause_classifier":
             doc_text     = sample["clause"]
             instructions = (
-                "Classify the following contract clause into exactly one of these "
+                f"Classify the following contract clause into exactly one of these "
                 f"8 types: {', '.join(CLAUSE_TAXONOMY)}. "
                 "Submit action_type='classify' and content=<label>."
             )
