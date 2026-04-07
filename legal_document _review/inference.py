@@ -204,34 +204,38 @@ def run_task(task_id: str) -> float:
 
 
 def main():
-    print("Legal Document Review — Inference Script")
-    print(f"API_BASE_URL : {API_BASE_URL}")
-    print(f"MODEL_NAME   : {MODEL_NAME}")
-    print(f"ENV_BASE     : {ENV_BASE}")
+    print("[START]")
+    print(f"API_BASE_URL={API_BASE_URL}")
+    print(f"MODEL_NAME={MODEL_NAME}")
+    print(f"ENV_BASE={ENV_BASE}")
+    print("[END]")
     print()
 
     scores = {}
 
     for task_id in TASKS:
         try:
+            print(f"[START] task={task_id}")
             score = run_task(task_id)
             scores[task_id] = score
+            print(f"[STEP] task={task_id} score={score:.4f}")
+            print(f"[END] task={task_id}")
         except Exception as e:
             print(f"ERROR on task {task_id}: {e}")
             raise  # re-raise so validator catches it
 
-    # Final scores report
-    print("\n" + "="*50)
-    print("FINAL SCORES")
-    print("="*50)
+    print()
+    print("[START]")
+    print("FINAL_SCORES:")
     for task_id, score in scores.items():
         status = "PASS" if 0.0 <= score <= 1.0 else "FAIL"
-        print(f"  [{status}] {task_id}: {score:.4f}")
+        print(f"  {task_id}: {score:.4f} [{status}]")
 
     overall = sum(scores.values()) / len(scores)
-    print(f"\n  Overall mean: {overall:.4f}")
+    print(f"Overall mean: {overall:.4f}")
+    print("[END]")
+    print()
 
-    # Write results.json
     results = {
         "scores": scores,
         "overall_mean": round(overall, 4),
@@ -240,7 +244,7 @@ def main():
     }
     with open("results.json", "w") as f:
         json.dump(results, f, indent=2)
-    print("\nresults.json written.")
+    print("results.json written.")
 
 
 if __name__ == "__main__":
