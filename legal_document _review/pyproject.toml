@@ -15,6 +15,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = []
 
+[project.scripts]
+server = "server:app"
+
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
